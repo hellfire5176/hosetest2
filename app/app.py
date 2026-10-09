@@ -54,15 +54,21 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
 
-@app.before_request
-def initialize_database():
+# --- NEW: Safe Context Initialization Block ---
+# This safely runs outside the web request pool to prevent crashing
+with app.app_context():
     db.create_all()
-    if not User.query.first():
-        session['setup_mode'] = True
-    else:
-        session.pop('setup_mode', None)
 
-# --- Primary Core Routes ---
+@app.before_request
+def check_initial_user():
+    # Only verify user population dynamically
+    with app.app_context():
+        if not User.query.first():
+            session['setup_mode'] = True
+        else:
+            session.pop('setup_mode', None)
+
+# --- Core Routes ---
 
 @app.route('/')
 def index():
@@ -141,15 +147,12 @@ def add_hose():
         flash(f"Hose {h_id} provisioned with unique token.", "success")
     return redirect(url_for('index'))
 
-# --- NEW: Advanced Analytics & Reporting Section Engine ---
-
 @app.route('/reports')
 def reports_dashboard():
     total_hoses = Hose.query.count()
     in_service = Hose.query.filter_by(status="In Service").count()
     failed_hoses = Hose.query.filter_by(status="Failed").count()
     
-    # Flag lines that have not been pressure tested within the last 365 days
     one_year_ago = datetime.utcnow() - timedelta(days=365)
     overdue_hoses = Hose.query.filter(
         (Hose.last_test_date == None) | (Hose.last_test_date < one_year_ago)
@@ -166,9 +169,7 @@ def reports_dashboard():
 
 @app.route('/reports/export/csv')
 def export_csv_report():
-    """Generates a live compliance database dump formatted into an audit-ready CSV."""
     hoses = Hose.query.all()
-    
     csv_buffer = io.StringIO()
     csv_buffer.write("Hose ID,Size (Inches),Length (Feet),Hose Type,Operational Status,Last Test Date\n")
     
