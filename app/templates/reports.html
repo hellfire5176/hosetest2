@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hose Testing Records & Reports</title>
+    <link rel="stylesheet" href="https://jsdelivr.net">
+</head>
+<body class="bg-light">
+<div class="container py-4" style="max-width: 900px;">
+    <header class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <a href="{{ url_for('index') }}" class="text-decoration-none text-muted small">← Back to Station Hub</a>
+            <h1 class="h3 mb-0">📊 Department Testing & Compliance Reports</h1>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('export_csv_report') }}" class="btn btn-sm btn-outline-dark">💾 Export CSV Ledger</a>
+        </div>
+    </header>
+
+    <!-- Operational KPI Matrix Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center p-3">
+                <small class="text-muted d-block mb-1">TOTAL INVENTORY</small>
+                <span class="h2 fw-bold text-dark">{{ total }}</span>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-bottom: 4px solid #198754 !important;">
+                <small class="text-muted d-block mb-1">IN SERVICE</small>
+                <span class="h2 fw-bold text-success">{{ in_service }}</span>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-bottom: 4px solid #dc3545 !important;">
+                <small class="text-muted d-block mb-1">OUT OF SERVICE</small>
+                <span class="h2 fw-bold text-danger">{{ failed }}</span>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center p-3" style="border-bottom: 4px solid #ffc107 !important;">
+                <small class="text-muted d-block mb-1">NFPA OVERDUE</small>
+                <span class="h2 fw-bold text-warning">{{ overdue|length }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- NFPA 1962 Testing Delinquency Watchlist -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3 border-0">
+            <h5 class="mb-0 text-danger">⚠️ NFPA 1962 Annual Test Exception List</h5>
+            <small class="text-muted">Active hose lines requiring immediate pressure containment recertification.</small>
+        </div>
+        <div class="p-0">
+            {% if not overdue %}
+                <div class="alert alert-success m-3 text-center small">All tracked operational lines possess valid, current test records.</div>
+            {% else %}
+                <div class="table-responsive">
+                    <table class="table table-hover table-striped mb-0 align-middle small">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Hose ID</th>
+                                <th>Specification</th>
+                                <th>Classification</th>
+                                <th>Last Certified Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for hose in overdue %}
+                                <tr>
+                                    <td><strong>{{ hose.id }}</strong></td>
+                                    <td>{{ hose.size_inches }}" x {{ hose.length_feet }}'</td>
+                                    <td><span class="badge bg-light text-dark border">{{ hose.hose_type }}</span></td>
+                                    <td class="text-danger fw-bold">{{ hose.last_test_date.strftime('%Y-%m-%d') if hose.last_test_date else 'NEVER TESTED' }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Historical Logs Timeline -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-0">
+            <h5 class="mb-0 text-secondary">📜 Archive Log of Batch Inspection History</h5>
+        </div>
+        <div class="p-0">
+            {% if not batches %}
+                <p class="text-muted text-center py-4 my-0">No historical test batch sheets archived in the log yet.</p>
+            {% else %}
+                <div class="list-group list-group-flush">
+                    {% for batch in batches %}
+                        <div class="list-group-item p-3">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <h6 class="mb-0">Batch Sheet ID #{{ batch.id }}</h6>
+                                    <small class="text-muted">Inspected by: <strong>{{ batch.tested_by }}</strong> on {{ batch.test_date.strftime('%Y-%m-%d %H:%M') }}</small>
+                                </div>
+                                <span class="badge bg-secondary">{{ batch.target_pressure }} PSI Cycle</span>
+                            </div>
+                            <div class="bg-light p-2 rounded">
+                                <small class="text-muted d-block mb-1">Tested Hose Lines ({{ batch.hoses|length }}):</small>
+                                <div class="d-flex flex-wrap gap-2">
+                                    {% for hose in batch.hoses %}
+                                        <span class="badge bg-white text-dark border">
+                                            {{ hose.id }}
+                                        </span>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script src="https://jsdelivr.net"></script>
+</body>
+</html>

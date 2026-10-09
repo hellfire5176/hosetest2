@@ -1,8 +1,8 @@
 import os
-import uuid
+import io
 import secrets
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -28,9 +28,10 @@ class Hose(db.Model):
     id = db.Column(db.String(50), primary_key=True)
     size_inches = db.Column(db.Float, nullable=False)
     length_feet = db.Column(db.Integer, nullable=False)
-    hose_type = db.Column(db.String(50), nullable=False)
-    status = db.Column(db.String(50), default="In Service")
+    hose_type = db.Column(db.String(50), nullable=False)  # Attack, Supply, Forestry
+    status = db.Column(db.String(50), default="In Service")  # In Service, Failed, In Test Layout
     scan_token = db.Column(db.String(64), unique=True, nullable=False)
+    last_test_date = db.Column(db.DateTime, nullable=True)
 
     @staticmethod
     def generate_token():
@@ -53,8 +54,6 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
 
-# --- Context Processor & Initialization ---
-
 @app.before_request
 def initialize_database():
     db.create_all()
@@ -63,7 +62,7 @@ def initialize_database():
     else:
         session.pop('setup_mode', None)
 
-# --- Routes ---
+# --- Primary Core Routes ---
 
 @app.route('/')
 def index():
@@ -94,7 +93,6 @@ def scan_hose(token):
 def start_batch():
     tester = request.form.get('tester', 'Firefighter')
     pressure = int(request.form.get('pressure', 300))
-    
     TestBatch.query.filter_by(is_active=True).update({"is_active": False})
     
     new_batch = TestBatch(tested_by=tester, target_pressure=pressure, is_active=True)
@@ -107,8 +105,10 @@ def start_batch():
 def submit_batch():
     batch = TestBatch.query.filter_by(is_active=True).first_or_404()
     failed_hose_ids = request.form.getlist('failed_hoses')
+    current_time = datetime.utcnow()
     
     for hose in batch.hoses:
+        hose.last_test_date = current_time
         if str(hose.id) in failed_hose_ids:
             hose.status = "Failed"
             db.session.execute(
@@ -127,10 +127,6 @@ def submit_batch():
 
 @app.route('/admin/add-hose', methods=['POST'])
 def add_hose():
-    if not session.get('is_admin') and not session.get('setup_mode'):
-        flash("Admin credentials required.", "danger")
-        return redirect(url_for('index'))
-        
     h_id = request.form.get('id')
     size = float(request.form.get('size'))
     length = int(request.form.get('length'))
@@ -142,27 +138,47 @@ def add_hose():
         new_hose = Hose(id=h_id, size_inches=size, length_feet=length, hose_type=h_type, scan_token=Hose.generate_token())
         db.session.add(new_hose)
         db.session.commit()
-        flash(f"Hose {h_id} provisioned with unique token {new_hose.scan_token[:8]}...", "success")
-        
+        flash(f"Hose {h_id} provisioned with unique token.", "success")
     return redirect(url_for('index'))
 
-@app.route('/admin', methods=['GET', 'POST'])
-def admin_setup():
-    if session.get('setup_mode') or session.get('is_admin'):
-        if request.method == 'POST':
-            username = request.form.get('username')
-            password = request.form.get('password')
-            hashed = generate_password_hash(password)
-            
-            new_user = User(username=username, password_hash=hashed, is_admin=True)
-            db.session.add(new_user)
-            db.session.commit()
-            session['is_admin'] = True
-            session.pop('setup_mode', None)
-            flash("Administrator account set up successfully.", "success")
-            return redirect(url_for('index'))
-        return render_template('admin.html')
-    return redirect(url_for('index'))
+# --- NEW: Advanced Analytics & Reporting Section Engine ---
+
+@app.route('/reports')
+def reports_dashboard():
+    total_hoses = Hose.query.count()
+    in_service = Hose.query.filter_by(status="In Service").count()
+    failed_hoses = Hose.query.filter_by(status="Failed").count()
+    
+    # Flag lines that have not been pressure tested within the last 365 days
+    one_year_ago = datetime.utcnow() - timedelta(days=365)
+    overdue_hoses = Hose.query.filter(
+        (Hose.last_test_date == None) | (Hose.last_test_date < one_year_ago)
+    ).filter(Hose.status != "Failed").all()
+    
+    historical_batches = TestBatch.query.filter_by(is_active=False).order_by(TestBatch.test_date.desc()).all()
+    
+    return render_template('reports.html', 
+                           total=total_hoses, 
+                           in_service=in_service, 
+                           failed=failed_hoses, 
+                           overdue=overdue_hoses,
+                           batches=historical_batches)
+
+@app.route('/reports/export/csv')
+def export_csv_report():
+    """Generates a live compliance database dump formatted into an audit-ready CSV."""
+    hoses = Hose.query.all()
+    
+    csv_buffer = io.StringIO()
+    csv_buffer.write("Hose ID,Size (Inches),Length (Feet),Hose Type,Operational Status,Last Test Date\n")
+    
+    for h in hoses:
+        t_str = h.last_test_date.strftime('%Y-%m-%d %H:%M') if h.last_test_date else "Never Tested"
+        csv_buffer.write(f"{h.id},{h.size_inches},{h.length_feet},{h.hose_type},{h.status},{t_str}\n")
+    
+    response = Response(csv_buffer.getvalue(), mimetype='text/csv')
+    response.headers['Content-Disposition'] = f"attachment; filename=hose_compliance_report_{datetime.now().strftime('%Y%m%d')}.csv"
+    return response
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
