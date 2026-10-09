@@ -54,24 +54,22 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False)
 
-# --- NEW: Safe Context Initialization Block ---
-# This safely runs outside the web request pool to prevent crashing
+# --- Safe Initialization ---
 with app.app_context():
     db.create_all()
-
-@app.before_request
-def check_initial_user():
-    # Only verify user population dynamically
-    with app.app_context():
-        if not User.query.first():
-            session['setup_mode'] = True
-        else:
-            session.pop('setup_mode', None)
 
 # --- Core Routes ---
 
 @app.route('/')
 def index():
+    # Automatically switch setup mode flags based on clean database queries
+    try:
+        setup_mode = User.query.first() is None
+    except Exception:
+        setup_mode = True
+        
+    session['setup_mode'] = setup_mode
+    
     hoses = Hose.query.all()
     active_batch = TestBatch.query.filter_by(is_active=True).first()
     return render_template('index.html', hoses=hoses, active_batch=active_batch)
